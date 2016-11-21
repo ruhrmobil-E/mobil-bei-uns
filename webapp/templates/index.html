@@ -1,0 +1,44 @@
+{% extends "layout.html" %}
+
+{% block bodyclass %}home{% endblock %}
+
+{% block headerslogan %}{% endblock %}
+
+{% block content %}
+<div class="container"><div id="map"></div><div id="map-attribution">Script: <a href="http://leafletjs.com/">Leaflet</a> | Kacheln: <a href="https://www.mapbox.com/">Mapbox</a> | Daten: <a href="/providers">Anbieter</a></div></div>
+<div id="search">
+  <div>
+    <form name="search-form" id="search-form">
+      <label for="search-type">Kategorien</label>
+      <select id="search-type" name="search-type" multiple>
+        <option value="1" selected>Baustellen</option>
+        <option value="2" selected>Parkplätze</option>
+        <option value="3" selected>Fahrradabstell-Anlagen</option>
+        <option value="4" selected>Verkehrsmeldungen</option>
+        <option value="5" selected>Sperranhänger</option>
+      </select>
+      <label for="search-location">Ort</label>
+      <input type="text" name="search-location" id="search-location" autocomplete="off" class="form-control">
+      <label for="search-type">Maximal-Parkplatzbelegung</label>
+      <input id="search-occupancy-rate" name="search-occupancy-rate" type="text" class="form-control" readonly>
+      <input id="search-occupancy-rate-input" name="search-occupancy-rate-input" type="text">
+      <label for="search-type">Datum der Baustelle</label>
+      <input id="search-date" name="search-date" type="text" class="form-control" readonly>
+      <input id="search-date-input" name="search-date-input" type="text">
+    </form>
+  </div>
+</div>
+<div id="traffic-item-details"></div>
+{% endblock %}
+
+{% block footer %}{% endblock %}
+
+{% block scripts %}
+<div id="loading-overlay"><div><p><i class="fa fa-cog fa-spin fa-3x fa-fw"></i></p><p>Lade Daten.</p></div></div>
+<script>
+  var mobilitaet_finden_conf = {
+    mapbox_token: '{{ config.MAPBOX_TOKEN }}'
+  }
+</script>
+{{ super() }}
+{% endblock %}
