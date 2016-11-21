@@ -11,7 +11,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 """
 
 from ..models import *
-from webapp import config, mongo
+from webapp import mongo, app
 import requests
 import datetime
 import json
