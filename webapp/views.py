@@ -152,6 +152,7 @@ def search_traffic_items():
   construction_site_date = request.form.get('date', None)
   occupancy_rate = request.form.get('occupancy_rate', None)
   zoom = request.form.get('zoom', None)
+  processed = request.form.get('processed', 1, type=int)
   
   saved_request = {
     'limits': limits,
@@ -164,6 +165,9 @@ def search_traffic_items():
   
   result_raw = mongo.db.traffic_item.find({
     '$and': [
+      {
+        'properties.processed': processed
+      },
       {
         'geometry': {
           '$geoIntersects': {
@@ -221,6 +225,12 @@ def search_traffic_items():
                 }
               }
             ]
+          },
+          {
+            
+            'properties.traffic_item_type': {
+              '$eq': 3
+            }
           }
         ]
       }

@@ -10,12 +10,12 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-from ..models import *
 from webapp import mongo, app
 import requests
 import datetime
 import json
 import time
+import bson
 from dateutil.parser import parse
 from lxml import etree
 import sqlalchemy
@@ -248,118 +248,82 @@ def sync_single_url(url):
     print "- FATAL: no valid JSON"
     return
   
-  traffic_item_provider = mongo.db.traffic_item_provider.find_one({ 'properties.external_id': url })
+  traffic_item_provider = mongo.db.traffic_item_provider.find_one({ 'external_id': url })
   if traffic_item_provider:
     traffic_item_provider = traffic_item_provider['_id']
   else:
-    traffic_item_provider = mongo.db.traffic_item_provider.insert_one({
+    traffic_item_provider = str(mongo.db.traffic_item_provider.insert_one({
       'created': datetime.datetime.now(),
       'external_id': url,
       'active': 1,
       'name': url.split('/')[1].split('.')[0]
-    }).inserted_id
-  
+    }).inserted_id)
   
   for raw_traffic_item in data['features']:
-    
-    # first: get unique id. this depends on data type
-    if type_deref[data['name']] == 2:
-      external_id = raw_traffic_item['properties']['parkingFacilityId']
+    save_traffic_item(traffic_item_provider, raw_traffic_item, type_deref[data['name']])
+
+
+def save_traffic_item(traffic_item_provider, raw_traffic_item, traffic_item_type):
+  # first: get unique id. this depends on data type
+  if traffic_item_type == 2:
+    external_id = raw_traffic_item['properties']['parkingFacilityId']
+  else:
+    external_id = raw_traffic_item['properties']['id']
+  
+  for item_property in raw_traffic_item['properties']:
+    if item_property in item_meta_keys[traffic_item_type]:
+      if item_meta_keys[traffic_item_type][item_property] == 'datetime':
+        if '-' in raw_traffic_item['properties'][item_property]:
+          raw_traffic_item['properties'][item_property] = parse(raw_traffic_item['properties'][item_property])
+        else:
+          raw_traffic_item['properties'][item_property] = datetime.datetime.strptime(raw_traffic_item['properties'][item_property], "%Y%m%d%H%M%S")
+        raw_traffic_item['properties'][item_property] = int(raw_traffic_item['properties'][item_property].strftime("%s"))
+      if item_meta_keys[traffic_item_type][item_property] == 'float':
+        raw_traffic_item['properties'][item_property] = float(raw_traffic_item['properties'][item_property])
+      if item_meta_keys[traffic_item_type][item_property] == 'integer':
+        raw_traffic_item['properties'][item_property] = int(raw_traffic_item['properties'][item_property])
     else:
-      external_id = raw_traffic_item['properties']['id']
-    
-    for item_property in raw_traffic_item['properties']:
-      if item_property in item_meta_keys[type_deref[data['name']]]:
-        if item_meta_keys[type_deref[data['name']]][item_property] == 'datetime':
-          if '-' in raw_traffic_item['properties'][item_property]:
-            raw_traffic_item['properties'][item_property] = parse(raw_traffic_item['properties'][item_property])
-          else:
-            raw_traffic_item['properties'][item_property] = datetime.datetime.strptime(raw_traffic_item['properties'][item_property], "%Y%m%d%H%M%S")
-          raw_traffic_item['properties'][item_property] = int(raw_traffic_item['properties'][item_property].strftime("%s"))
-        if item_meta_keys[type_deref[data['name']]][item_property] == 'float':
-          raw_traffic_item['properties'][item_property] = float(raw_traffic_item['properties'][item_property])
-        if item_meta_keys[type_deref[data['name']]][item_property] == 'integer':
-          raw_traffic_item['properties'][item_property] = int(raw_traffic_item['properties'][item_property])
-      else:
-        print "new item meta key: %s" % item_property
-    raw_traffic_item['properties']['traffic_item_provider'] = traffic_item_provider
-    raw_traffic_item['properties']['traffic_item_type'] = type_deref[data['name']]
-    raw_traffic_item['properties']['zoom_level_min'] = zoom_level_min[raw_traffic_item['properties']['traffic_item_type']]
-    if 'occupiedParkingSpaces' in raw_traffic_item['properties'] and 'totalParkingCapacity' in raw_traffic_item['properties']:
+      print "new item meta key: %s" % item_property
+  raw_traffic_item['properties']['traffic_item_provider'] = bson.objectid.ObjectId(traffic_item_provider)
+  raw_traffic_item['properties']['traffic_item_type'] = traffic_item_type
+  raw_traffic_item['properties']['zoom_level_min'] = zoom_level_min[raw_traffic_item['properties']['traffic_item_type']]
+  if 'occupiedParkingSpaces' in raw_traffic_item['properties'] and 'totalParkingCapacity' in raw_traffic_item['properties']:
+    if raw_traffic_item['properties']['occupiedParkingSpaces'] and raw_traffic_item['properties']['totalParkingCapacity']:
       raw_traffic_item['properties']['occupancy_rate'] = float(raw_traffic_item['properties']['occupiedParkingSpaces']) / float(raw_traffic_item['properties']['totalParkingCapacity'])
-    raw_traffic_item['properties']['external_id'] = external_id
-    if raw_traffic_item['properties']['traffic_item_type'] == 6:
-      raw_traffic_item['properties']['traffic_item_type'] = 1
-    
-    mongo.db.traffic_item.update({
-      'properties.external_id': external_id,
-      'properties.traffic_item_provider': traffic_item_provider
-    }, {
-      '$set': raw_traffic_item
-    },
-    upsert=True)
-    """
-    traffic_item = TrafficItem.query.filter_by(external_id=external_id).filter_by(traffic_item_provider_id=traffic_item_provider.id)
-    if traffic_item.count():
-      traffic_item = traffic_item.first()
-    else:
-      traffic_item = TrafficItem()
-      traffic_item.created = datetime.datetime.now()
-      traffic_item.external_id = external_id
-      traffic_item.traffic_item_provider_id = traffic_item_provider.id
-    traffic_item.active = 1
-    traffic_item.updated = datetime.datetime.now()
-    if raw_traffic_item['geometry']['type'] == 'Point':
-      traffic_item.lat = raw_traffic_item['geometry']['coordinates'][1]
-      traffic_item.lon = raw_traffic_item['geometry']['coordinates'][0]
-    elif raw_traffic_item['geometry']['type'] == 'LineString':
-      traffic_item.lat = raw_traffic_item['geometry']['coordinates'][0][1]
-      traffic_item.lon = raw_traffic_item['geometry']['coordinates'][0][0]
-    else:
-      print "- ignore traffic without location: %s" % external_id
-    
-    traffic_item.area = json.dumps(raw_traffic_item['geometry'])
-    traffic_item.item_type = type_deref[data['name']]
-    
-    db.session.add(traffic_item)
-    db.session.commit()
-    
-    meta_list = []
-    for meta_key, meta_value_type in item_meta_keys[traffic_item.item_type].iteritems():
-      if meta_key in raw_traffic_item['properties']:
-        value = raw_traffic_item['properties'][meta_key]
-        if meta_value_type == 'datetime':
-          if '-' in value:
-            value = parse(value)
-          else:
-            value = datetime.datetime.strptime(value, "%Y%m%d%H%M%S")
-          value = value.strftime("%s")
-        if meta_value_type == 'float':
-          value = float(value)
-        if meta_value_type == 'integer':
-          value = int(value)
-        if meta_value_type != 'ignore' and value:
-          meta_value = TrafficItemMeta.query.filter_by(traffic_item_id=traffic_item.id).filter_by(key=meta_key)
-          if meta_value.count():
-            meta_value = meta_value.first()
-          else:
-            meta_value = TrafficItemMeta()
-            meta_value.key = meta_key
-            meta_value.traffic_item_id = traffic_item.id
-            meta_value.created = datetime.datetime.now()
-          meta_value.updated = datetime.datetime.now()
-          meta_value.value = value
-          
-          db.session.add(meta_value)
-          db.session.commit()
-          
-          meta_list.append(meta_key)
-        del raw_traffic_item['properties'][meta_key]
-    for item in raw_traffic_item['properties']:
-      print "- new item found: %s" % json.dumps(item)
-    to_delete_items = TrafficItemMeta.query.filter(sqlalchemy.sql.expression.not_(TrafficItemMeta.key.in_(meta_list))).filter_by(traffic_item_id=traffic_item.id).all()
-    for to_delete_item in to_delete_items:
-      db.session.delete(to_delete_item)
-      db.session.commit()
-  """
-    
+  raw_traffic_item['properties']['external_id'] = external_id
+  if raw_traffic_item['properties']['traffic_item_type'] == 6:
+    raw_traffic_item['properties']['traffic_item_type'] = 1
+  raw_traffic_item['properties']['processed'] = 0
+  
+  mongo.db.traffic_item.update({
+    'properties.external_id': external_id,
+    'properties.traffic_item_provider': bson.objectid.ObjectId(traffic_item_provider),
+    'properties.processed': 0
+  }, {
+    '$set': raw_traffic_item
+  },
+  upsert=True)
+  generate_processed_traffic_item(traffic_item_provider, external_id, raw_traffic_item)
+  
+def generate_processed_traffic_item(traffic_item_provider, external_id, traffic_item):
+  if 'alertC2PrimaryPointLocation' in traffic_item['properties'] and 'alertC2SecondaryPointLocation' in traffic_item['properties']:
+    start_lcl = traffic_item['properties']['alertC2PrimaryPointLocation']
+    end_lcl = traffic_item['properties']['alertC2SecondaryPointLocation']
+  
+    existing_route = mongo.db.lcl_route.find_one({
+      'start': start_lcl,
+      'end': end_lcl
+    })
+    if existing_route:
+      traffic_item['geometry'] = existing_route['geometry']
+  
+  traffic_item['properties']['processed'] = 1
+  mongo.db.traffic_item.update({
+    'properties.external_id': external_id,
+    'properties.traffic_item_provider': bson.objectid.ObjectId(traffic_item_provider),
+    'properties.processed': 1
+  }, {
+    '$set': traffic_item
+  },
+  upsert=True)
+  

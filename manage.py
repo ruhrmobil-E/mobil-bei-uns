@@ -43,6 +43,10 @@ def import_traffic_items_to_es():
 @manager.command
 def import_traffic_items_to_es():
   util.import_traffic_items_to_es()
+  
+@manager.command
+def precache_routes():
+  util.precache_routes()
 
 @manager.command
 def mongodb_init():

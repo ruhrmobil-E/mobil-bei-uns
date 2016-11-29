@@ -7904,6 +7904,7 @@ code a {
   display: block; }
 
 #search {
+  display: none;
   position: absolute;
   right: 0;
   bottom: 0;
@@ -7918,6 +7919,7 @@ code a {
 
 /* home page */
 .home #header {
+  display: none;
   z-index: 10000;
   position: absolute;
   top: 0;
@@ -7951,6 +7953,51 @@ code a {
   background-color: rgba(255, 255, 255, 0.8);
   font-size: 11px; }
 
+#startquestion {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.8);
+  z-index: 5000; }
+
+#startquestion > div {
+  position: absolute;
+  text-align: center;
+  margin: 0; }
+
+@media only screen and (max-width: 543px) {
+  #startquestion > div {
+    left: 0;
+    right: 0;
+    transform: -50%, 0;
+    width: auto;
+    margin: 0 15px; } }
+
+@media only screen and (min-width: 544px) {
+  #startquestion > div {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 400px;
+    text-align: center; } }
+
+#startquestion > div > form > p {
+  margin-top: 15px; }
+
+#startquestion button {
+  margin-top: 20px; }
+
+#important-links {
+  display: none;
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  z-index: 10000;
+  padding: 10px; }
+
 /* forms */
 .bootstrap-multiselect {
   display: block; }
@@ -7961,7 +8008,7 @@ code a {
 .multiselect-container {
   z-index: 3000; }
 
-form .btn {
+#search-form form .btn {
   border: 1px solid rgba(0, 0, 0, 0.15); }
 
 #search-date-slider, #search-occupancy-rate-slider {
@@ -7985,3 +8032,14 @@ form .btn {
   float: right;
   font-size: 3rem;
   cursor: pointer; }
+
+.slider {
+  margin-bottom: 0.5rem; }
+
+#search-form label {
+  margin-top: 1rem; }
+
+#search-form input[type="checkbox"].form-control {
+  float: left;
+  width: auto;
+  margin: 5px 10px 0 0; }

@@ -24,10 +24,12 @@ import translitcodec
 import requests
 import csv
 import traceback
-import sqlalchemy
 import pymongo
 from itertools import cycle
 from lxml import etree
+from xml.etree import ElementTree
+from copy import deepcopy
+import math
 
 import requests.packages.urllib3
 requests.packages.urllib3.disable_warnings()
@@ -88,9 +90,9 @@ def sync_source(name):
     print "no such source: %s" % name
 
 def mongodb_init():
-  mongo.db.traffic_item.find()
-  mongo.db.traffic_item.create_index([('location.properties.external_id', pymongo.ASCENDING), ('location.properties.provider_id', pymongo.ASCENDING)])
+  mongo.db.traffic_item.create_index([('properties.external_id', pymongo.ASCENDING), ('properties.traffic_item_provider', pymongo.ASCENDING), ('properties.processed', pymongo.ASCENDING)])
   mongo.db.traffic_item.create_index([('geometry', '2dsphere')])
+  mongo.db.lcl_route.create_index([('start'), ('end')])
 
 def import_regions_to_sql():
   print "Importing %s" % app.config['BUND_REGION_CSV']
@@ -143,6 +145,176 @@ def import_regions_to_sql():
         db.session.add(region)
         db.session.commit()
 
+def precache_routes():
+  traffic_items = mongo.db.traffic_item.find({
+    'properties.alertC2PrimaryPointLocation': {
+      '$exists': True
+    },
+    'properties.alertC2SecondaryPointLocation': {
+      '$exists': True
+    },
+    'properties.processed': 0
+  })
+  
+  for traffic_item in traffic_items:
+    start_lcl = traffic_item['properties']['alertC2PrimaryPointLocation']
+    end_lcl = traffic_item['properties']['alertC2SecondaryPointLocation']
+    
+    existing_route = mongo.db.lcl_route.find_one({
+      'start': start_lcl,
+      'end': end_lcl
+    })
+    if existing_route:
+      print "route between %s and %s already in database" % (start_lcl, end_lcl)
+    else:
+      start = deref_lcl(start_lcl)
+      end = deref_lcl(end_lcl)
+      road_number = False
+      if 'roadNumber' in traffic_item['properties']:
+        road_number = traffic_item['properties']['roadNumber']
+      
+      if not start or not end or not road_number:
+        if not start:
+          print "!!! start missing for _id %s" % traffic_item['_id']
+        if not end:
+          print "!!! end missing for _id %s" % traffic_item['_id']
+        if not road_number:
+          print "!!! road_number missing for _id %s" % traffic_item['_id']
+          if start and end:
+            save_lcl_route([[start['lon'], start['lat']], [end['lon'], end['lat']]], start_lcl, end_lcl)
+      else:
+        # We need the route from A to B to get the real construction site position
+        if start['lat'] > end['lat']:
+          route_n = start['lat']
+          route_s = end['lat']
+        else:
+          route_n = end['lat']
+          route_s = start['lat']
+        if start['lon'] > end['lon']:
+          route_e = start['lon']
+          route_w = end['lon']
+        else:
+          route_e = end['lon']
+          route_w = start['lon']
+        route_s -= 0.05
+        route_n += 0.05
+        route_e += 0.05
+        route_w -= 0.05
+        overpass_url = "http://www.overpass-api.de/api/interpreter?data=node(%s,%s,%s,%s);way(bn);way._[\"highway\"=\"motorway\"];(._;>;);out;" % (route_s, route_w, route_n, route_e)
+        overpass_result = requests.get(overpass_url)
+        overpass_data = etree.fromstring(overpass_result.content)
+        node_list = {}
+        way_piece_list = {}
+        for item in overpass_data:
+          if item.tag == 'node':
+            node_list[item.attrib['id']] = [float(item.attrib['lat']), float(item.attrib['lon'])]
+          else:
+            steet_name = ''
+            if item.tag == 'way':
+              current_way = []
+              for subitem in item:
+                if subitem.tag == 'nd':
+                  current_way.append(subitem.attrib['ref'])
+                elif subitem.tag == 'tag':
+                  if subitem.attrib['k'] == 'ref':
+                    steet_name = subitem.attrib['v']
+            # just add when it's the right street name
+            if steet_name.replace(' ', '') == road_number:
+              way_piece_list[item.attrib['id']] = current_way
+        # Chain ways
+        way_list = []
+        if len(way_piece_list):
+          while len(way_piece_list):
+            key = way_piece_list.keys()[0]
+            current_way = way_piece_list[key]
+            del way_piece_list[key]
+            found = True
+            while found:
+              found = False
+              new_way_piece_list = deepcopy(way_piece_list)
+              for key, way_piece in way_piece_list.iteritems():
+                if way_piece[0] == current_way[-1]:
+                  current_way = current_way + way_piece[1:]
+                  del new_way_piece_list[key]
+                  found = True
+                elif way_piece[-1] == current_way[0]:
+                  current_way = way_piece[:-1] + current_way
+                  del new_way_piece_list[key]
+                  found = True
+              way_piece_list = deepcopy(new_way_piece_list)
+            way_list.append(current_way)
+          # Dereference nodes
+          for way_id, way in enumerate(way_list):
+            for position_id, position in enumerate(way):
+              way_list[way_id][position_id] = node_list[position]
+          # Get lowest distance
+          min_distance = 1000000
+          min_position = -1
+          for index, way in enumerate(way_list):
+            tmp_distance = distance_earth(start['lat'], start['lon'], way[0][0], way[0][1])
+            if tmp_distance < min_distance:
+              min_position = index
+              min_distance = tmp_distance
+          # Find start point
+          way_result = way_list[min_position]
+          min_distance = 1000000
+          min_position = -1
+          for index, way_result_point in enumerate(way_result):
+            current_distance = distance_earth(start['lat'], start['lon'], way_result_point[0], way_result_point[1])
+            if current_distance < min_distance:
+              min_distance = current_distance
+              min_position = index
+          way_result = way_result[min_position:]
+          # Find end point
+          min_distance = 1000000
+          min_position = -1
+          for index, way_result_point in enumerate(way_result):
+            current_distance = distance_earth(end['lat'], end['lon'], way_result_point[0], way_result_point[1])
+            if current_distance < min_distance:
+              min_distance = current_distance
+              min_position = index
+          way_result = way_result[:min_position]
+          if len(way_result) == 0:
+            print "!!! empty route between %s and %s, use start and end only" % (start_lcl, end_lcl)
+            save_lcl_route([[start['lon'], start['lat']], [end['lon'], end['lat']]], start_lcl, end_lcl)
+          else:
+            for i in range(0, len(way_result) ):
+              way_result[i] = [way_result[i][1], way_result[i][0]]
+            print "route between %s and %s found and inserted" % (start_lcl, end_lcl)
+            save_lcl_route(way_result, start_lcl, end_lcl)
+        else:
+          print "Warning: bad result at geosearch with %s " % overpass_url
+          print "Debug Info"
+          print overpass_result.content
+        
+
+def save_lcl_route(way_result, start_lcl, end_lcl):
+  mongo.db.lcl_route.insert({
+    'geometry': {
+      'coordinates': way_result,
+      'type': 'LineString'
+    },
+    'start': start_lcl,
+    'end': end_lcl
+  })
+
+def deref_lcl(lcl_id):
+  with open('%s' % (app.config['LCL_CSV']), 'rb') as csvfile:
+    lcl_file = csv.reader(csvfile, delimiter=';', quotechar="\"")
+    first = True
+    for lcl_dataset in lcl_file:
+      if first:
+        first = False
+      else:
+        if lcl_dataset[0]:
+          if int(lcl_dataset[0]) == int(lcl_id):
+            if lcl_dataset[28] and lcl_dataset[29]:
+              result = {
+                'lat': float(lcl_dataset[29].replace('+', '')) / 100000,
+                'lon': float(lcl_dataset[28].replace('+', '')) / 100000
+              }
+              return result
+  return False
 
 def import_regions_to_es():
   new_index = "%s-%s" % (app.config['REGION_ES'], datetime.datetime.utcnow().strftime('%Y%m%d-%H%M'))
@@ -244,7 +416,6 @@ def import_regions_to_es():
       print "Deleting index %s" % single_index
       es.indices.delete(single_index)
   
-
 def import_traffic_items_to_es():
   new_index = "%s-%s" % (app.config['TRAFFIC_ITEMS_ES'], datetime.datetime.utcnow().strftime('%Y%m%d-%H%M'))
   try:
@@ -395,6 +566,20 @@ def import_traffic_items_to_es():
     if new_index != single_index:
       print "Deleting index %s" % single_index
       es.indices.delete(single_index)
+
+def distance_earth(lat1, long1, lat2, long2):
+  degrees_to_radians = math.pi/180.0
+  
+  phi1 = (90.0 - float(lat1))*degrees_to_radians
+  phi2 = (90.0 - float(lat2))*degrees_to_radians
+  
+  theta1 = float(long1)*degrees_to_radians
+  theta2 = float(long2)*degrees_to_radians
+  
+  cos = (math.sin(phi1)*math.sin(phi2)*math.cos(theta1 - theta2) + math.cos(phi1)*math.cos(phi2))
+  arc = math.acos( cos )
+  
+  return arc * 6373 * 1000
 
 # Creates a slug
 def slugify(text, delim=u'-'):

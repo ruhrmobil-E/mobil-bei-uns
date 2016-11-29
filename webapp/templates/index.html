@@ -20,11 +20,30 @@
       <label for="search-location">Ort</label>
       <input type="text" name="search-location" id="search-location" autocomplete="off" class="form-control">
       <label for="search-type">Maximal-Parkplatzbelegung</label>
-      <input id="search-occupancy-rate" name="search-occupancy-rate" type="text" class="form-control" readonly>
       <input id="search-occupancy-rate-input" name="search-occupancy-rate-input" type="text">
+      <input id="search-occupancy-rate" name="search-occupancy-rate" type="text" class="form-control" readonly>
       <label for="search-type">Datum der Baustelle</label>
-      <input id="search-date" name="search-date" type="text" class="form-control" readonly>
       <input id="search-date-input" name="search-date-input" type="text">
+      <input id="search-date" name="search-date" type="text" class="form-control" readonly>
+      <label for="search-processed"><input id="search-processed" name="search-processed" type="checkbox" value="1" class="form-control" checked> Weiterverarbeitete Daten</label>
+    </form>
+  </div>
+</div>
+<div id="startquestion">
+  <div>
+    <h1>mobil bei uns</h1>
+    <form name="startquestion-form" id="startquestion-form">
+      <p>Ich suche</p>
+      <select id="startquestion-type" name="search-type" multiple>
+        <option value="1" selected>Baustellen</option>
+        <option value="2" selected>Parkplätze</option>
+        <option value="3" selected>Fahrradabstell-Anlagen</option>
+        <option value="4" selected>Verkehrsmeldungen</option>
+        <option value="5" selected>Sperranhänger</option>
+      </select>
+      <p>in der Nähe von</p>
+      <input type="text" name="startquestion-location" id="startquestion-location" autocomplete="off" class="form-control">
+      <button class="btn form-control" name="startquestion-submit" id="startquestion-submit">finden</button>
     </form>
   </div>
 </div>
